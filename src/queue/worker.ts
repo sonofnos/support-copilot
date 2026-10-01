@@ -1,5 +1,5 @@
 import { Worker } from "bullmq";
-import { env as processEnv, type Env } from "../config/env.js";
+import type { Env } from "../config/env.js";
 import { wireAiClients } from "../ai/di.js";
 import { createDb } from "../db/pool.js";
 import { createQdrant } from "../qdrant/client.js";
@@ -24,11 +24,15 @@ export interface EmbeddingWorkerHandle {
   close: () => Promise<void>;
 }
 
-// Takes `env` explicitly (defaulting to the process's own) rather than
-// importing the singleton directly, so integration tests can point a real
-// worker at their ephemeral Testcontainers instances instead of whatever
-// DATABASE_URL/REDIS_URL happen to be in process.env.
-export async function buildEmbeddingWorker(env: Env = processEnv): Promise<EmbeddingWorkerHandle> {
+// Takes `env` as a required argument rather than importing the
+// process-wide singleton: config/env.ts validates process.env at module
+// load time (eagerly, as soon as it's imported, with or without this
+// parameter's default ever being used), which would make merely importing
+// this file fail outside a real deployment environment - exactly what
+// happened when CI (no DATABASE_URL/REDIS_URL/etc. set) imported this
+// module to build a worker inside a test. The CLI entrypoint below loads
+// the real env lazily, only when actually run as a CLI.
+export async function buildEmbeddingWorker(env: Env): Promise<EmbeddingWorkerHandle> {
   const db = createDb(env.DATABASE_URL);
   const redis = createRedis(env.REDIS_URL);
   const qdrant = createQdrant(env.QDRANT_URL, env.QDRANT_API_KEY);
@@ -80,5 +84,6 @@ export async function buildEmbeddingWorker(env: Env = processEnv): Promise<Embed
 }
 
 if (import.meta.url === `file://${process.argv[1]}`) {
-  buildEmbeddingWorker().then(() => logger.info("embedding worker started"));
+  const { env } = await import("../config/env.js");
+  buildEmbeddingWorker(env).then(() => logger.info("embedding worker started"));
 }
